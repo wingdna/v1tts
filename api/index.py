@@ -2,36 +2,40 @@ from flask import Flask, request, Response
 from flask_cors import CORS
 import edge_tts
 import asyncio
-import io
 
 app = Flask(__name__)
-CORS(app) # 开启跨域，允许你的前端页面访问
+CORS(app)
 
-async def generate_audio(text, voice):
+async def get_audio_data(text, voice):
     communicate = edge_tts.Communicate(text, voice)
-    # 使用流式传输
+    audio_data = b""
     async for chunk in communicate.stream():
         if chunk["type"] == "audio":
-            yield chunk["data"]
+            audio_data += chunk["data"]
+    return audio_data
 
 @app.route('/api/tts')
-async def tts():
+def tts():
     text = request.args.get('text')
     voice = request.args.get('voice', 'zh-CN-XiaoxiaoNeural')
     
     if not text:
-        return "Error: Missing 'text' parameter", 400
+        return "Error: Missing text parameter", 400
 
-    # 返回音频流，浏览器会自动识别并播放
-    return Response(
-        generate_audio(text, voice),
-        mimetype='audio/mpeg',
-        headers={
-            "Content-Disposition": "inline",
-            "Cache-Control": "no-cache"
-        }
-    )
+    try:
+        # 使用 asyncio.run 确保在同步 Flask 中运行异步任务
+        loop = asyncio.new_loop()
+        asyncio.set_event_loop(loop)
+        audio_content = loop.run_until_complete(get_audio_data(text, voice))
+        loop.close()
+        
+        return Response(
+            audio_content,
+            mimetype='audio/mpeg',
+            headers={"Content-Disposition": "inline"}
+        )
+    except Exception as e:
+        return f"Internal Error: {str(e)}", 500
 
-# Vercel 要求的入口
-def handler(request):
-    return app(request)
+# 必须显式导出 app
+app = app

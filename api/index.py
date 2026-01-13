@@ -3,11 +3,12 @@ from flask_cors import CORS
 import edge_tts
 import asyncio
 
+# 1. 必须命名为 app，且不能被包含在 if __name__ == "__main__": 之外
 app = Flask(__name__)
 CORS(app)
 
-# 将异步合成逻辑独立出来
-async def text_to_speech_logic(text, voice):
+# 异步逻辑保持独立
+async def get_audio(text, voice):
     communicate = edge_tts.Communicate(text, voice)
     audio_data = b""
     async for chunk in communicate.stream():
@@ -21,25 +22,21 @@ def tts():
     voice = request.args.get('voice', 'zh-CN-XiaoxiaoNeural')
     
     if not text:
-        return "Error: Missing text parameter", 400
+        return "Missing text parameter", 400
 
     try:
-        # 核心修复：在同步 Flask 路由中启动一个全新的事件循环
-        loop = asyncio.new_loop()
-        asyncio.set_event_loop(loop)
-        audio_content = loop.run_until_complete(text_to_speech_logic(text, voice))
-        loop.close()
+        # 在同步 Flask 中运行异步 edge-tts
+        new_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(new_loop)
+        audio_content = new_loop.run_until_complete(get_audio(text, voice))
+        new_loop.close()
         
         return Response(
             audio_content,
             mimetype='audio/mpeg',
-            headers={
-                "Content-Disposition": "inline",
-                "Content-Length": str(len(audio_content))
-            }
+            headers={"Content-Disposition": "inline"}
         )
     except Exception as e:
-        return f"TTS Error: {str(e)}", 500
+        return f"Runtime Error: {str(e)}", 500
 
-# 这一行对 Vercel 识别入口至关重要
-app = app
+# 2. 严禁添加 def handler() 函数，直接让 app 暴露在最外层

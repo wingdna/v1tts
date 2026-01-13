@@ -1,32 +1,34 @@
-import asyncio
 from flask import Flask, request, Response
 from flask_cors import CORS
 import edge_tts
+import asyncio
 
-# 必须叫 app，且不要添加任何 handler 函数
 app = Flask(__name__)
 CORS(app)
 
-async def generate(text, voice):
+# 纯异步逻辑，不直接暴露给路由
+async def _do_tts(text, voice):
     communicate = edge_tts.Communicate(text, voice)
-    data = b""
+    audio_content = b""
     async for chunk in communicate.stream():
         if chunk["type"] == "audio":
-            data += chunk["data"]
-    return data
+            audio_content += chunk["data"]
+    return audio_content
 
 @app.route('/api/tts')
-def tts():
+def tts():  # 注意：这里去掉了 async 关键字
     text = request.args.get('text', 'hello')
     voice = request.args.get('voice', 'zh-CN-XiaoxiaoNeural')
     
-    # 强制在同步环境运行异步任务
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     try:
-        audio_content = loop.run_until_complete(generate(text, voice))
-        return Response(audio_content, mimetype='audio/mpeg')
-    finally:
+        # 强制在同步 Flask 线程中开启新的事件循环
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        data = loop.run_until_complete(_do_tts(text, voice))
         loop.close()
+        
+        return Response(data, mimetype='audio/mpeg')
+    except Exception as e:
+        return f"Error: {str(e)}", 500
 
-# 严禁在下方添加 app = app 或任何 if __name__ == "__main__"
+# 确保没有任何 handler 函数或 app = app

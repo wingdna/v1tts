@@ -3,12 +3,11 @@ from flask_cors import CORS
 import edge_tts
 import asyncio
 
-# 1. 必须命名为 app，且不能被包含在 if __name__ == "__main__": 之外
+# 必须叫 app，且直接暴露在最外层
 app = Flask(__name__)
 CORS(app)
 
-# 异步逻辑保持独立
-async def get_audio(text, voice):
+async def _generate(text, voice):
     communicate = edge_tts.Communicate(text, voice)
     audio_data = b""
     async for chunk in communicate.stream():
@@ -25,18 +24,17 @@ def tts():
         return "Missing text parameter", 400
 
     try:
-        # 在同步 Flask 中运行异步 edge-tts
-        new_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(new_loop)
-        audio_content = new_loop.run_until_complete(get_audio(text, voice))
-        new_loop.close()
+        # 使用全新的事件循环来运行异步合成任务
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        audio_content = loop.run_until_complete(_generate(text, voice))
+        loop.close()
         
         return Response(
             audio_content,
-            mimetype='audio/mpeg',
-            headers={"Content-Disposition": "inline"}
+            mimetype='audio/mpeg'
         )
     except Exception as e:
-        return f"Runtime Error: {str(e)}", 500
+        return f"Error: {str(e)}", 500
 
-# 2. 严禁添加 def handler() 函数，直接让 app 暴露在最外层
+# 注意：这里千万不要写 def handler(request) 或者 app = app
